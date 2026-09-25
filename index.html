@@ -1,0 +1,369 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>NOVAX — trade everything</title>
+<style>
+:root{--bg:#0a0a0a;--p:#111;--l:#1d1d1d;--t:#e8e8e8;--m:#6b6b6b;--g:#2ee6a0;--r:#ff4d5e}
+*{box-sizing:border-box;margin:0;padding:0}
+body{background:var(--bg);color:var(--t);font:13px/1.4 ui-monospace,SFMono-Regular,Menlo,monospace;height:100vh;overflow:hidden;display:grid;grid-template-columns:240px 1fr 280px;grid-template-rows:44px 1fr}
+header{grid-column:1/4;display:flex;align-items:center;gap:20px;padding:0 16px;border-bottom:1px solid var(--l)}
+header b{letter-spacing:2px}
+header .sp{flex:1}
+.mut{color:var(--m)}.up{color:var(--g)}.dn{color:var(--r)}
+button{background:none;border:1px solid var(--l);color:var(--t);font:inherit;padding:6px 10px;cursor:pointer;border-radius:4px}
+button:hover{border-color:#444}button.on{background:var(--t);color:var(--bg)}
+input{background:var(--p);border:1px solid var(--l);color:var(--t);font:inherit;padding:8px;border-radius:4px;width:100%;outline:none}
+input:focus{border-color:#444}
+aside{border-right:1px solid var(--l);display:flex;flex-direction:column;min-height:0}
+#search{margin:10px;width:auto}
+#list{overflow-y:auto;flex:1}
+.row{display:flex;justify-content:space-between;padding:8px 12px;cursor:pointer;border-left:2px solid transparent;transition:background .6s}
+.row:hover{background:var(--p)}.row.sel{border-left-color:var(--t);background:var(--p)}
+.row .s{font-weight:600}.row .r{text-align:right}
+.row.fu{background:rgba(46,230,160,.12);transition:none}.row.fd{background:rgba(255,77,94,.12);transition:none}
+main{display:flex;flex-direction:column;min-width:0;min-height:0}
+#top{display:flex;align-items:baseline;gap:16px;padding:12px 16px}
+#sym{font-size:20px;font-weight:700}
+#px{font-size:26px;font-weight:700;transition:color .3s}
+#px.bu{animation:bu .6s}#px.bd{animation:bd .6s}
+@keyframes bu{0%{transform:translateY(6px);color:var(--g)}100%{transform:none}}
+@keyframes bd{0%{transform:translateY(-6px);color:var(--r)}100%{transform:none}}
+#bar{display:flex;gap:4px;padding:0 16px 8px;flex-wrap:wrap}
+#bar .sep{width:1px;background:var(--l);margin:0 6px}
+#wrap{position:relative;flex:1;min-height:0;border-top:1px solid var(--l)}
+canvas{position:absolute;inset:0;width:100%;height:100%}
+#fx{position:absolute;inset:0;pointer-events:none;overflow:hidden}
+.pt{position:absolute;font-size:18px;font-weight:700;animation:fl 1.6s ease-out forwards}
+@keyframes fl{to{transform:translateY(var(--dy));opacity:0}}
+.big{position:absolute;inset:0;display:flex;align-items:center;justify-content:center;font-size:64px;font-weight:800;letter-spacing:4px;animation:bg 1.8s ease-out forwards}
+@keyframes bg{0%{opacity:0;transform:scale(.6)}20%{opacity:1;transform:scale(1.05)}100%{opacity:0;transform:scale(1.3)}}
+.shake{animation:sh .5s}@keyframes sh{25%{transform:translate(-4px,2px)}50%{transform:translate(4px,-2px)}75%{transform:translate(-2px,1px)}}
+.right{border-left:1px solid var(--l);padding:16px;display:flex;flex-direction:column;gap:14px;overflow-y:auto}
+.tabs{display:flex;gap:4px}.tabs button{flex:1}
+.buy.on{background:var(--g);border-color:var(--g);color:#000}.sell.on{background:var(--r);border-color:var(--r);color:#000}
+.kv{display:flex;justify-content:space-between}
+h4{font-size:11px;color:var(--m);letter-spacing:1.5px;font-weight:400}
+#go{padding:10px;font-weight:700}
+.pct{display:flex;gap:4px}.pct button{flex:1;padding:4px}
+#hold .kv{padding:4px 0;cursor:pointer}
+#toasts{position:fixed;right:16px;bottom:16px;display:flex;flex-direction:column;gap:8px;z-index:9}
+.toast{background:var(--p);border:1px solid var(--l);padding:10px 14px;border-radius:6px;animation:ti .3s;min-width:220px;cursor:pointer}
+@keyframes ti{from{transform:translateX(40px);opacity:0}}
+#modal{position:fixed;inset:0;background:rgba(0,0,0,.7);display:none;align-items:center;justify-content:center;z-index:10}
+#modal>div{background:var(--bg);border:1px solid var(--l);padding:20px;width:320px;display:flex;flex-direction:column;gap:10px;border-radius:8px}
+</style>
+</head>
+<body>
+<header>
+  <b>NOVAX</b><span class="mut">markets · 24/7</span>
+  <span class="sp"></span>
+  <span class="mut">cash</span><span id="cash"></span>
+  <span class="mut">equity</span><span id="eq"></span>
+  <span id="pnl"></span>
+  <button id="listBtn">+ list coin</button>
+  <button id="notiBtn">🔔</button>
+  <button id="resetBtn" title="reset">↺</button>
+</header>
+<aside>
+  <input id="search" placeholder="search">
+  <div id="list"></div>
+</aside>
+<main>
+  <div id="top"><span id="sym"></span><span id="name" class="mut"></span><span id="px"></span><span id="ch"></span><span class="sp"></span></div>
+  <div id="bar">
+    <span id="tfs"></span><span class="sep"></span><span id="tools"></span><span class="sep"></span>
+    <button id="undo">undo</button><button id="clr">clear</button>
+  </div>
+  <div id="wrap"><canvas id="cv"></canvas><div id="fx"></div></div>
+</main>
+<div class="right">
+  <div class="tabs"><button class="buy on" id="tb">buy</button><button class="sell" id="ts">sell</button></div>
+  <div><h4>AMOUNT (USD)</h4><input id="amt" type="number" min="0" placeholder="0.00"></div>
+  <div class="pct"><button data-p=".1">10%</button><button data-p=".25">25%</button><button data-p=".5">50%</button><button data-p="1">max</button></div>
+  <div class="kv mut"><span>receive</span><span id="rcv">—</span></div>
+  <button id="go">buy</button>
+  <h4>POSITION</h4>
+  <div id="pos" class="mut">none</div>
+  <h4>HOLDINGS</h4>
+  <div id="hold"></div>
+  <h4>TRADE — SWAP</h4>
+  <div class="kv"><span class="mut">to</span><input id="swapTo" placeholder="symbol e.g. PEPE" style="width:60%"></div>
+  <button id="swapBtn">swap all of this → target</button>
+  <h4>HISTORY</h4>
+  <div id="hist" class="mut" style="font-size:11px"></div>
+</div>
+<div id="toasts"></div>
+<div id="modal"><div>
+  <b>list a new coin</b>
+  <input id="nSym" placeholder="symbol (e.g. MOON)" maxlength="8">
+  <input id="nName" placeholder="name">
+  <input id="nPx" type="number" placeholder="start price" value="0.001">
+  <input id="nVol" type="number" placeholder="volatility 1-10" value="6">
+  <div style="display:flex;gap:6px"><button id="nOk" style="flex:1">list it</button><button id="nNo">cancel</button></div>
+</div></div>
+
+<script>
+const $=s=>document.querySelector(s);
+const BASE=2000; // ms per base candle
+const MAXC=3000;
+const COINS=[["BTC","Bitcoin",64000,1],["ETH","Ethereum",3100,1.3],["SOL","Solana",145,2],["BNB","BNB",580,1.2],["XRP","XRP",.52,1.8],["ADA","Cardano",.45,1.8],["AVAX","Avalanche",28,2],["DOT","Polkadot",6.2,1.8],["LINK","Chainlink",13,1.8],["TON","Toncoin",5.5,1.8],["SUI","Sui",1.6,2.5],["APT","Aptos",7,2.2],["ARB","Arbitrum",.7,2.3],["OP","Optimism",1.5,2.3],["NEAR","Near",4.5,2.2],["LTC","Litecoin",70,1.5],["DOGE","Dogecoin",.12,3],["SHIB","Shiba Inu",.000017,3.5],["PEPE","Pepe",.0000095,5],["WIF","dogwifhat",2.1,5],["BONK","Bonk",.000022,5],["FLOKI","Floki",.00013,4.5],["POPCAT","Popcat",.9,6],["MOG","Mog Coin",.0000015,6],["BRETT","Brett",.09,5.5],["TURBO","Turbo",.006,6],["MEW","cat in a dogs world",.005,6],["GIGA","Gigachad",.03,6.5],["NEIRO","Neiro",.0012,6.5],["FARTCOIN","Fartcoin",.8,7],["PNUT","Peanut",.4,7],["TRUMP","Official Trump",10,6],["GOAT","Goatseus",.5,7],["SPX","SPX6900",.7,6.5],["MOODENG","Moo Deng",.15,7.5],["BOME","Book of Meme",.008,6.5],["WOJAK","Wojak",.0004,8],["CHAD","Chad",.00002,8]];
+const TFS=[["2s",1],["10s",5],["30s",15],["1m",30],["5m",150]];
+const TOOLS=[["↖","cursor"],["╱","line"],["→","ray"],["—","hline"],["│","vline"],["▭","rect"],["◯","circle"],["fib","fib"],["✎","pen"],["T","text"],["⇕","measure"],["⌫","erase"]];
+
+// ===== deterministic market: price is a pure function of (symbol, time) =====
+// every visitor, any time, sees the same market — no server needed, it never stops.
+function hs(str){let h=2166136261;for(let i=0;i<str.length;i++){h^=str.charCodeAt(i);h=Math.imul(h,16777619)}return h>>>0}
+function hr(seed,n){let x=(seed^Math.imul(n|0,0x9E3779B1)^Math.imul((n/4294967296)|0,0x85EBCA77))>>>0;x^=x>>>16;x=Math.imul(x,0x7feb352d);x^=x>>>15;x=Math.imul(x,0x846ca68b);x^=x>>>16;return(x>>>0)/4294967296}
+function vn(seed,x){const i=Math.floor(x),fr=x-i,u=fr*fr*(3-2*fr);return((hr(seed,i)*(1-u)+hr(seed,i+1)*u)-.5)*2}
+const OCT=[[3,.0015],[11,.003],[41,.006],[180,.012],[900,.025],[3600,.04],[21600,.07],[86400,.1],[604800,.15]];
+function lp(c,ms){
+  const t=ms/1000,sd=c.seed,vk=Math.pow(c.v,.85);let y=0;
+  for(let k=0;k<OCT.length;k++)y+=vn(sd+k*7919,t/OCT[k][0])*OCT[k][1]*vk;
+  y+=(hr(sd+99,Math.floor(ms/500))-.5)*.0012*c.v; // tick jitter
+  // pumps & dumps: each 10-min slot may host an event
+  const SL=600,slot=Math.floor(t/SL);
+  for(let q=slot-3;q<=slot;q++){
+    if(hr(sd+1,q)>.03*c.v)continue;
+    const st=q*SL+hr(sd+2,q)*SL,dur=40+hr(sd+3,q)*140,dir=hr(sd+4,q)<.55?1:-1,mag=dir*(.04+hr(sd+5,q)*.2)*c.v/4;
+    const e=t-st;if(e<=0)continue;
+    y+= e<dur? mag*(e/dur)*(e/dur) : mag*(.45+.55*Math.exp(-(e-dur)/500));
+  }
+  return y;
+}
+const pxAt=(c,ms)=>c.p0*Math.exp(lp(c,ms));
+function mkCoin(s,n,p,v,listed){return{s,n,v,p0:p,seed:hs(s),listed:listed||0,cs:[],p:p}}
+function candleAt(c,t0){let o=pxAt(c,t0),h=o,l=o,x=o;for(let i=1;i<=4;i++){x=pxAt(c,t0+i*500);h=Math.max(h,x);l=Math.min(l,x)}return{t:t0,o,h,l,c:x}}
+function build(c){const now=Date.now(),cur=Math.floor(now/BASE)*BASE;const from=Math.max(cur-(MAXC-1)*BASE,c.listed?Math.floor(c.listed/BASE)*BASE:-Infinity);
+  c.cs=[];for(let t=from;t<cur;t+=BASE)c.cs.push(candleAt(c,t));c.cs.push(liveCandle(c,cur,now));c.p=c.cs[c.cs.length-1].c}
+function liveCandle(c,t0,now){let o=pxAt(c,t0),h=o,l=o,x=o;for(let t=t0+500;t<=now;t+=500){x=pxAt(c,t);h=Math.max(h,x);l=Math.min(l,x)}x=pxAt(c,now);return{t:t0,o,h:Math.max(h,x),l:Math.min(l,x),c:x}}
+
+let S=JSON.parse(localStorage.getItem("cc")||"null");
+const blank=()=>({cash:10000,hold:{},hist:[],draw:{},sel:"BTC",tf:1,start:10000,custom:[]});
+if(!S)S=blank();
+if(!S.custom){ // migrate old saves: keep user-listed coins
+  const base=new Set(COINS.map(c=>c[0]));S.custom=Object.values(S.coins||{}).filter(c=>!base.has(c.s)).map(c=>[c.s,c.n,c.p,c.v,Date.now()]);
+}
+delete S.coins;
+const M={};COINS.forEach(([s,n,p,v])=>M[s]=mkCoin(s,n,p,v));S.custom.forEach(([s,n,p,v,l])=>M[s]=mkCoin(s,n,p,v,l));
+Object.values(M).forEach(c=>c.p=pxAt(c,Date.now()));
+Object.defineProperty(S,"coins",{value:M,enumerable:false});
+const save=()=>{localStorage.setItem("cc",JSON.stringify(S))};
+const f=(p)=>p>=1000?p.toLocaleString(undefined,{maximumFractionDigits:2}):p>=1?p.toFixed(p>=100?2:3):p>=.01?p.toFixed(4):p.toPrecision(3);
+const usd=v=>"$"+v.toLocaleString(undefined,{minimumFractionDigits:2,maximumFractionDigits:2});
+const chg=(c,n)=>{let t=Date.now()-n*BASE;if(c.listed)t=Math.max(t,c.listed);return(c.p/pxAt(c,t)-1)*100};
+
+// ---------- live tick ----------
+let cur=null; // forming candle per coin
+const alerted={};
+function tick(){
+  const now=Date.now();
+  Object.values(S.coins).forEach(c=>{
+    if(c.s===S.sel){if(!c.cs.length)build(c);const t0=Math.floor(now/BASE)*BASE;let last=c.cs[c.cs.length-1];
+      if(t0>last.t){c.cs[c.cs.length-1]=candleAt(c,last.t);for(let t=Math.max(last.t+BASE,t0-MAXC*BASE);t<t0;t+=BASE)c.cs.push(candleAt(c,t));c.cs.push(liveCandle(c,t0,now));while(c.cs.length>MAXC)c.cs.shift()}
+      else c.cs[c.cs.length-1]=liveCandle(c,t0,now);
+      c.p=c.cs[c.cs.length-1].c}
+    else{c.p=pxAt(c,now);if(c.cs.length)c.cs=[]}
+    c.dir=c.p>prev?1:-1;
+    // blow-up detection (~last 60s)
+    const m=chg(c,30);
+    if(Math.abs(m)>=Math.max(6,c.v*2.2)&&(!alerted[c.s]||now-alerted[c.s]>45000)){alerted[c.s]=now;blow(c,m)}
+  });
+  render();
+}
+function blow(c,m){
+  const up=m>0,msg=`${c.s} ${up?"🚀 pumping":"💀 dumping"} ${m>0?"+":""}${m.toFixed(1)}% in 1m`;
+  toast(msg,c.s);
+  if(window.Notification&&Notification.permission==="granted"&&document.hidden)new Notification("NOVAX",{body:msg});
+  if(c.s===S.sel)bigFx(up);
+}
+
+// ---------- ui: list ----------
+const listEl=$("#list");
+function renderList(){
+  const q=$("#search").value.toUpperCase();
+  const arr=Object.values(S.coins).filter(c=>!q||c.s.includes(q)||c.n.toUpperCase().includes(q));
+  if(listEl.dataset.k!==arr.map(c=>c.s).join()){
+    listEl.dataset.k=arr.map(c=>c.s).join();
+    listEl.innerHTML=arr.map(c=>`<div class="row" data-s="${c.s}"><div><div class="s">${c.s}</div><div class="mut">${c.n}</div></div><div class="r"><div class="p"></div><div class="c"></div></div></div>`).join("");
+  }
+  listEl.querySelectorAll(".row").forEach(r=>{
+    const c=S.coins[r.dataset.s],ch=chg(c,1800);
+    r.classList.toggle("sel",c.s===S.sel);
+    r.querySelector(".p").textContent=f(c.p);
+    const ce=r.querySelector(".c");ce.textContent=(ch>=0?"+":"")+ch.toFixed(2)+"%";ce.className="c "+(ch>=0?"up":"dn");
+    if(Math.random()<.15){r.classList.remove("fu","fd");void r.offsetWidth;r.classList.add(c.dir>0?"fu":"fd");setTimeout(()=>r.classList.remove("fu","fd"),50)}
+  });
+}
+listEl.onclick=e=>{const r=e.target.closest(".row");if(r){S.sel=r.dataset.s;view.off=0;view.zoom=90;save();render()}};
+$("#search").oninput=renderList;
+
+// ---------- ui: header/top ----------
+let lastPx=0,lastFx=0;
+function renderTop(){
+  const c=S.coins[S.sel];
+  $("#sym").textContent=c.s;$("#name").textContent=c.n;
+  const px=$("#px");px.textContent="$"+f(c.p);
+  if(lastPx&&c.p!==lastPx){px.className="";void px.offsetWidth;px.className=c.p>lastPx?"bu":"bd";px.style.color=c.p>lastPx?"var(--g)":"var(--r)";
+    const mv=(c.p/lastPx-1)*100;if(Math.abs(mv)>c.v*.25&&Date.now()-lastFx>900){lastFx=Date.now();floatFx(mv)}}
+  lastPx=c.p;
+  const ch=chg(c,1800);$("#ch").innerHTML=`<span class="${ch>=0?"up":"dn"}">${ch>=0?"▲":"▼"} ${Math.abs(ch).toFixed(2)}%</span> <span class="mut">1h</span>`;
+  let eq=S.cash;for(const s in S.hold)eq+=S.hold[s].q*S.coins[s].p;
+  $("#cash").textContent=usd(S.cash);$("#eq").textContent=usd(eq);
+  const pl=eq-S.start;$("#pnl").innerHTML=`<span class="${pl>=0?"up":"dn"}">${pl>=0?"+":""}${usd(pl)}</span>`;
+}
+function floatFx(mv){
+  const fx=$("#fx"),d=document.createElement("div"),up=mv>0;
+  d.className="pt";d.textContent=(up?"▲ +":"▼ ")+mv.toFixed(2)+"%";d.style.color=up?"var(--g)":"var(--r)";
+  d.style.right=(60+Math.random()*120)+"px";d.style.top=(up?60:30)+"%";d.style.setProperty("--dy",up?"-140px":"140px");
+  fx.appendChild(d);setTimeout(()=>d.remove(),1600);
+}
+function bigFx(up){
+  const fx=$("#fx"),d=document.createElement("div");d.className="big";d.textContent=up?"PUMP ▲":"DUMP ▼";d.style.color=up?"var(--g)":"var(--r)";
+  fx.appendChild(d);setTimeout(()=>d.remove(),1800);
+  if(!up){$("#wrap").classList.remove("shake");void $("#wrap").offsetWidth;$("#wrap").classList.add("shake")}
+  for(let i=0;i<14;i++)setTimeout(()=>floatFx((up?1:-1)*(Math.random()*5+1)),i*60);
+}
+
+// ---------- chart ----------
+const cv=$("#cv"),ctx=cv.getContext("2d");
+const view={zoom:90,off:0}; // candles visible, offset from right
+let tool="cursor",drag=null,hover=null,geom=null;
+function candles(){
+  const c=S.coins[S.sel],n=TFS[S.tf][1];if(!c.cs.length)build(c);if(n===1)return c.cs;
+  const out=[];const iv=BASE*n;
+  for(const k of c.cs){const t=Math.floor(k.t/iv)*iv;const l=out[out.length-1];
+    if(l&&l.t===t){l.h=Math.max(l.h,k.h);l.l=Math.min(l.l,k.l);l.c=k.c}else out.push({t,o:k.o,h:k.h,l:k.l,c:k.c})}
+  return out;
+}
+function drawChart(){
+  const W=cv.clientWidth,H=cv.clientHeight,dpr=devicePixelRatio||1;
+  if(cv.width!==W*dpr||cv.height!==H*dpr){cv.width=W*dpr;cv.height=H*dpr}
+  ctx.setTransform(dpr,0,0,dpr,0,0);ctx.clearRect(0,0,W,H);
+  const cs=candles(),PR=70,PB=22,cw=(W-PR)/view.zoom;
+  const end=cs.length-view.off,start=Math.max(0,Math.floor(end-view.zoom)-1);
+  const vis=cs.slice(start,Math.max(end,start+1));
+  let hi=-Infinity,lo=Infinity;vis.forEach(k=>{hi=Math.max(hi,k.h);lo=Math.min(lo,k.l)});
+  const pad=(hi-lo)*.12||hi*.01;hi+=pad;lo-=pad;
+  const iv=BASE*TFS[S.tf][1],tR=cs[cs.length-1].t+ (view.off>0?-view.off*iv:0);
+  // x: time -> px (rightmost candle center at W-PR-cw)
+  const tx=t=>W-PR-cw*.5-((tR-t)/iv)*cw, xt=x=>tR-((W-PR-cw*.5-x)/cw)*iv;
+  const py=p=>PB/2+(1-(Math.log(p)-Math.log(lo))/(Math.log(hi)-Math.log(lo)))*(H-PB*1.5);
+  const yp=y=>Math.exp(Math.log(lo)+(1-(y-PB/2)/(H-PB*1.5))*(Math.log(hi)-Math.log(lo)));
+  geom={tx,xt,py,yp,W,H,PR};
+  // grid
+  ctx.font="10px ui-monospace,monospace";ctx.fillStyle="#555";ctx.strokeStyle="#161616";ctx.lineWidth=1;
+  for(let i=1;i<6;i++){const y=(H-PB)*i/6;ctx.beginPath();ctx.moveTo(0,y);ctx.lineTo(W-PR,y);ctx.stroke();ctx.fillText(f(yp(y)),W-PR+6,y+3)}
+  for(let i=1;i<6;i++){const x=(W-PR)*i/6;ctx.beginPath();ctx.moveTo(x,0);ctx.lineTo(x,H-PB);ctx.stroke();ctx.fillText(new Date(xt(x)).toLocaleTimeString([], {hour:"2-digit",minute:"2-digit",second:"2-digit"}),x-24,H-6)}
+  // candles
+  vis.forEach(k=>{const x=tx(k.t),up=k.c>=k.o;ctx.strokeStyle=ctx.fillStyle=up?"#2ee6a0":"#ff4d5e";
+    ctx.beginPath();ctx.moveTo(x,py(k.h));ctx.lineTo(x,py(k.l));ctx.stroke();
+    const y1=py(Math.max(k.o,k.c)),y2=py(Math.min(k.o,k.c));ctx.fillRect(x-cw*.35,y1,Math.max(1,cw*.7),Math.max(1,y2-y1))});
+  // last price line
+  const lp=S.coins[S.sel].p,ly=py(lp),up=lp>=cs[cs.length-1].o;
+  ctx.setLineDash([2,3]);ctx.strokeStyle=up?"#2ee6a0":"#ff4d5e";ctx.beginPath();ctx.moveTo(0,ly);ctx.lineTo(W-PR,ly);ctx.stroke();ctx.setLineDash([]);
+  ctx.fillStyle=up?"#2ee6a0":"#ff4d5e";ctx.fillRect(W-PR,ly-8,PR,16);ctx.fillStyle="#000";ctx.fillText(f(lp),W-PR+6,ly+3);
+  // drawings
+  const ds=(S.draw[S.sel]||[]).concat(drag&&drag.d?[drag.d]:[]);
+  ds.forEach(d=>drawShape(d));
+  // crosshair
+  if(hover&&hover.x<W-PR){ctx.strokeStyle="#333";ctx.setLineDash([3,3]);ctx.beginPath();ctx.moveTo(hover.x,0);ctx.lineTo(hover.x,H-PB);ctx.moveTo(0,hover.y);ctx.lineTo(W-PR,hover.y);ctx.stroke();ctx.setLineDash([]);
+    ctx.fillStyle="#222";ctx.fillRect(W-PR,hover.y-8,PR,16);ctx.fillStyle="#ddd";ctx.fillText(f(yp(hover.y)),W-PR+6,hover.y+3)}
+}
+function drawShape(d){
+  const{tx,py,W,PR}=geom,P=d.pts.map(p=>[tx(p.t),py(p.p)]);
+  ctx.strokeStyle=ctx.fillStyle=d.col||"#9ab";ctx.lineWidth=1.5;
+  const [a,b]=[P[0],P[1]||P[0]];
+  ctx.beginPath();
+  switch(d.k){
+    case"line":ctx.moveTo(...a);ctx.lineTo(...b);break;
+    case"ray":{const dx=b[0]-a[0],dy=b[1]-a[1],s=4000/Math.max(1,Math.hypot(dx,dy));ctx.moveTo(...a);ctx.lineTo(a[0]+dx*s,a[1]+dy*s);break}
+    case"hline":ctx.moveTo(0,a[1]);ctx.lineTo(W-PR,a[1]);ctx.fillText(f(d.pts[0].p),4,a[1]-4);break;
+    case"vline":ctx.moveTo(a[0],0);ctx.lineTo(a[0],geom.H);break;
+    case"rect":ctx.rect(a[0],a[1],b[0]-a[0],b[1]-a[1]);ctx.globalAlpha=.08;ctx.fillRect(a[0],a[1],b[0]-a[0],b[1]-a[1]);ctx.globalAlpha=1;break;
+    case"circle":ctx.ellipse((a[0]+b[0])/2,(a[1]+b[1])/2,Math.abs(b[0]-a[0])/2,Math.abs(b[1]-a[1])/2,0,0,7);break;
+    case"pen":P.forEach((p,i)=>i?ctx.lineTo(...p):ctx.moveTo(...p));break;
+    case"text":ctx.font="13px ui-monospace,monospace";ctx.fillText(d.txt,a[0],a[1]);ctx.font="10px ui-monospace,monospace";break;
+    case"fib":{const p1=d.pts[0].p,p2=(d.pts[1]||d.pts[0]).p,x1=Math.min(a[0],b[0]),x2=Math.max(a[0],b[0],x1+80);
+      [0,.236,.382,.5,.618,.786,1].forEach(r=>{const p=p2+(p1-p2)*r,y=py(p);ctx.moveTo(x1,y);ctx.lineTo(x2,y);ctx.fillText(r+" · "+f(p),x2+4,y+3)});break}
+    case"measure":{const pc=((d.pts[1]||d.pts[0]).p/d.pts[0].p-1)*100,up=pc>=0;ctx.strokeStyle=ctx.fillStyle=up?"#2ee6a0":"#ff4d5e";
+      ctx.globalAlpha=.1;ctx.fillRect(a[0],a[1],b[0]-a[0],b[1]-a[1]);ctx.globalAlpha=1;ctx.moveTo((a[0]+b[0])/2,a[1]);ctx.lineTo((a[0]+b[0])/2,b[1]);
+      ctx.fillText((up?"+":"")+pc.toFixed(2)+"%",(a[0]+b[0])/2+6,(a[1]+b[1])/2);break}
+  }
+  ctx.stroke();
+}
+function ptAt(e){const r=cv.getBoundingClientRect(),x=e.clientX-r.left,y=e.clientY-r.top;return{x,y,t:geom.xt(x),p:geom.yp(y)}}
+cv.onmousedown=e=>{
+  const q=ptAt(e);
+  if(tool==="cursor"){drag={pan:true,x0:q.x,off0:view.off};return}
+  if(tool==="erase"){eraseAt(q);return}
+  if(tool==="text"){const t=prompt("text");if(t){push({k:"text",pts:[q],txt:t})}return}
+  if(tool==="hline"||tool==="vline"){push({k:tool,pts:[q]});return}
+  drag={d:{k:tool,pts:tool==="pen"?[q]:[q,q],col:"#9ab"}};
+};
+addEventListener("mousemove",e=>{
+  if(!geom)return;const q=ptAt(e);hover=e.target===cv?q:null;
+  if(drag&&drag.pan){const cw=(geom.W-geom.PR)/view.zoom;view.off=Math.max(0,Math.round(drag.off0+(q.x-drag.x0)/cw))}
+  else if(drag&&drag.d){if(drag.d.k==="pen")drag.d.pts.push(q);else drag.d.pts[1]=q}
+  drawChart();
+});
+addEventListener("mouseup",()=>{if(drag&&drag.d)push(drag.d);drag=null});
+cv.onwheel=e=>{e.preventDefault();view.zoom=Math.min(600,Math.max(15,view.zoom*(e.deltaY>0?1.15:.87)));drawChart()};
+function push(d){d.pts=d.pts.map(p=>({t:p.t,p:p.p}));(S.draw[S.sel]=S.draw[S.sel]||[]).push(d);save();drawChart()}
+function eraseAt(q){const ds=S.draw[S.sel]||[];let best=-1,bd=25;
+  ds.forEach((d,i)=>d.pts.forEach(p=>{const dd=Math.hypot(geom.tx(p.t)-q.x,geom.py(p.p)-q.y);const dh=d.k==="hline"?Math.abs(geom.py(p.p)-q.y):d.k==="vline"?Math.abs(geom.tx(p.t)-q.x):dd;if(Math.min(dd,dh)<bd){bd=Math.min(dd,dh);best=i}}));
+  if(best>=0){ds.splice(best,1);save();drawChart()}}
+$("#undo").onclick=()=>{(S.draw[S.sel]||[]).pop();save();drawChart()};
+$("#clr").onclick=()=>{S.draw[S.sel]=[];save();drawChart()};
+$("#tfs").innerHTML=TFS.map((t,i)=>`<button data-i="${i}">${t[0]}</button>`).join(" ");
+$("#tools").innerHTML=TOOLS.map(t=>`<button data-t="${t[1]}" title="${t[1]}">${t[0]}</button>`).join(" ");
+$("#tfs").onclick=e=>{if(e.target.dataset.i){S.tf=+e.target.dataset.i;view.off=0;uiBar();drawChart()}};
+$("#tools").onclick=e=>{const b=e.target.closest("button");if(b){tool=b.dataset.t;uiBar();cv.style.cursor=tool==="cursor"?"grab":"crosshair"}};
+function uiBar(){document.querySelectorAll("#tfs button").forEach(b=>b.classList.toggle("on",+b.dataset.i===S.tf));document.querySelectorAll("#tools button").forEach(b=>b.classList.toggle("on",b.dataset.t===tool))}
+
+// ---------- trading ----------
+let side="buy";
+function setSide(s){side=s;$("#tb").classList.toggle("on",s==="buy");$("#ts").classList.toggle("on",s==="sell");$("#go").textContent=s+" "+S.sel;$("#go").style.borderColor=s==="buy"?"var(--g)":"var(--r)";renderTrade()}
+$("#tb").onclick=()=>setSide("buy");$("#ts").onclick=()=>setSide("sell");
+document.querySelectorAll(".pct button").forEach(b=>b.onclick=()=>{const c=S.coins[S.sel],h=S.hold[S.sel];const max=side==="buy"?S.cash:(h?h.q*c.p:0);$("#amt").value=(max*b.dataset.p).toFixed(2);renderTrade()});
+$("#amt").oninput=renderTrade;
+function trade(sym,sd,usdAmt){
+  const c=S.coins[sym],fee=.001;if(!(usdAmt>0))return toast("enter an amount");
+  if(sd==="buy"){if(usdAmt>S.cash+1e-9)return toast("not enough cash");const q=usdAmt*(1-fee)/c.p;const h=S.hold[sym]||(S.hold[sym]={q:0,cost:0});h.q+=q;h.cost+=usdAmt;S.cash-=usdAmt}
+  else{const h=S.hold[sym];if(!h||h.q*c.p<usdAmt-1e-6)return toast("not enough "+sym);let q=usdAmt/c.p;if(h.q-q<1e-12||h.q*c.p-usdAmt<.01)q=h.q;const frac=q/h.q;h.cost*=1-frac;h.q-=q;S.cash+=q*c.p*(1-fee);if(h.q<=1e-12)delete S.hold[sym]}
+  S.hist.unshift(`${new Date().toLocaleTimeString()} ${sd} ${usd(usdAmt)} ${sym} @ ${f(c.p)}`);S.hist=S.hist.slice(0,30);save();render();return true;
+}
+$("#go").onclick=()=>{if(trade(S.sel,side,+$("#amt").value)){toast(`${side==="buy"?"bought":"sold"} ${S.sel}`);$("#amt").value=""}};
+$("#swapBtn").onclick=()=>{const to=$("#swapTo").value.toUpperCase().trim(),h=S.hold[S.sel];
+  if(!S.coins[to]||to===S.sel)return toast("unknown target");if(!h)return toast("no "+S.sel+" to swap");
+  const v=h.q*S.coins[S.sel].p;trade(S.sel,"sell",v);trade(to,"buy",Math.min(S.cash,v*(1-.001)));toast(`swapped ${S.sel} → ${to}`)};
+function renderTrade(){
+  const c=S.coins[S.sel],a=+$("#amt").value||0;
+  $("#rcv").textContent=a?(side==="buy"?(a*.999/c.p).toPrecision(6)+" "+c.s:usd(a*.999)):"—";
+  const h=S.hold[S.sel];
+  $("#pos").innerHTML=h?`<div class="kv"><span>${h.q.toPrecision(6)} ${c.s}</span><span>${usd(h.q*c.p)}</span></div><div class="kv"><span>pnl</span><span class="${h.q*c.p>=h.cost?"up":"dn"}">${usd(h.q*c.p-h.cost)} (${((h.q*c.p/h.cost-1)*100).toFixed(2)}%)</span></div>`:"none";
+  $("#hold").innerHTML=Object.keys(S.hold).map(s=>{const h=S.hold[s],v=h.q*S.coins[s].p;return`<div class="kv" data-s="${s}"><span>${s}</span><span class="${v>=h.cost?"up":"dn"}">${usd(v)}</span></div>`}).join("")||'<span class="mut">empty</span>';
+  $("#hist").innerHTML=S.hist.map(x=>`<div>${x}</div>`).join("");
+}
+$("#hold").onclick=e=>{const r=e.target.closest("[data-s]");if(r){S.sel=r.dataset.s;render()}};
+
+// ---------- list coin ----------
+$("#listBtn").onclick=()=>$("#modal").style.display="flex";
+$("#nNo").onclick=()=>$("#modal").style.display="none";
+$("#nOk").onclick=()=>{const s=$("#nSym").value.toUpperCase().replace(/[^A-Z0-9]/g,""),n=$("#nName").value||s,p=+$("#nPx").value,v=Math.min(10,Math.max(1,+$("#nVol").value||5));
+  if(!s||S.coins[s]||!(p>0))return toast("invalid or taken symbol");
+  const L=Date.now();const nc=mkCoin(s,n,p,v,L);nc.p0=p/Math.exp(lp(nc,L));S.custom.push([s,n,nc.p0,v,L]);build(nc);S.coins[s]=nc;S.sel=s;$("#modal").style.display="none";save();toast(`${s} listed 🎉`);render()};
+
+// ---------- misc ----------
+function toast(m,sym){const d=document.createElement("div");d.className="toast";d.textContent=m;if(sym)d.onclick=()=>{S.sel=sym;render()};$("#toasts").appendChild(d);setTimeout(()=>d.remove(),5000)}
+$("#notiBtn").onclick=()=>{if(!window.Notification)return toast("notifications not supported");Notification.requestPermission().then(p=>toast("notifications: "+p))};
+$("#resetBtn").onclick=()=>{if(confirm("reset everything?")){localStorage.removeItem("cc");location.reload()}};
+let lastSel;
+function render(){if(lastSel!==S.sel){lastSel=S.sel;lastPx=0;setSide(side)}renderList();renderTop();renderTrade();drawChart()}
+addEventListener("resize",drawChart);
+uiBar();setSide("buy");render();
+setInterval(tick,500);setInterval(save,5000);addEventListener("beforeunload",save);
+</script>
+</body>
+</html>
