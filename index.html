@@ -109,7 +109,9 @@ const $=s=>document.querySelector(s);
 const BASE=2000; // ms per base candle
 const MAXC=3000;
 const COINS=[["BTC","Bitcoin",64000,1],["ETH","Ethereum",3100,1.3],["SOL","Solana",145,2],["BNB","BNB",580,1.2],["XRP","XRP",.52,1.8],["ADA","Cardano",.45,1.8],["AVAX","Avalanche",28,2],["DOT","Polkadot",6.2,1.8],["LINK","Chainlink",13,1.8],["TON","Toncoin",5.5,1.8],["SUI","Sui",1.6,2.5],["APT","Aptos",7,2.2],["ARB","Arbitrum",.7,2.3],["OP","Optimism",1.5,2.3],["NEAR","Near",4.5,2.2],["LTC","Litecoin",70,1.5],["DOGE","Dogecoin",.12,3],["SHIB","Shiba Inu",.000017,3.5],["PEPE","Pepe",.0000095,5],["WIF","dogwifhat",2.1,5],["BONK","Bonk",.000022,5],["FLOKI","Floki",.00013,4.5],["POPCAT","Popcat",.9,6],["MOG","Mog Coin",.0000015,6],["BRETT","Brett",.09,5.5],["TURBO","Turbo",.006,6],["MEW","cat in a dogs world",.005,6],["GIGA","Gigachad",.03,6.5],["NEIRO","Neiro",.0012,6.5],["FARTCOIN","Fartcoin",.8,7],["PNUT","Peanut",.4,7],["TRUMP","Official Trump",10,6],["GOAT","Goatseus",.5,7],["SPX","SPX6900",.7,6.5],["MOODENG","Moo Deng",.15,7.5],["BOME","Book of Meme",.008,6.5],["WOJAK","Wojak",.0004,8],["CHAD","Chad",.00002,8]];
-const TFS=[["2s",1],["10s",5],["30s",15],["1m",30],["5m",150]];
+const TFS=[["1s",1,"1s",1e3],["1m",30,"1m",6e4],["5m",150,"5m",3e5],["15m",450,"15m",9e5],["1h",1800,"1h",36e5]];
+const API="https://data-api.binance.vision/api/v3",WSS="wss://data-stream.binance.vision/stream?streams=";
+const START=5311.42;
 const TOOLS=[["↖","cursor"],["╱","line"],["→","ray"],["—","hline"],["│","vline"],["▭","rect"],["◯","circle"],["fib","fib"],["✎","pen"],["T","text"],["⇕","measure"],["⌫","erase"]];
 
 // ===== deterministic market: price is a pure function of (symbol, time) =====
@@ -140,8 +142,9 @@ function build(c){const now=Date.now(),cur=Math.floor(now/BASE)*BASE;const from=
 function liveCandle(c,t0,now){let o=pxAt(c,t0),h=o,l=o,x=o;for(let t=t0+500;t<=now;t+=500){x=pxAt(c,t);h=Math.max(h,x);l=Math.min(l,x)}x=pxAt(c,now);return{t:t0,o,h:Math.max(h,x),l:Math.min(l,x),c:x}}
 
 let S=JSON.parse(localStorage.getItem("cc")||"null");
-const blank=()=>({cash:10000,hold:{},hist:[],draw:{},sel:"BTC",tf:1,start:10000,custom:[]});
+const blank=()=>({cash:START,hold:{},hist:[],draw:{},sel:"BTC",tf:1,start:START,custom:[]});
 if(!S)S=blank();
+if(!S.v2){S.v2=1;S.start=START}
 if(!S.custom){ // migrate old saves: keep user-listed coins
   const base=new Set(COINS.map(c=>c[0]));S.custom=Object.values(S.coins||{}).filter(c=>!base.has(c.s)).map(c=>[c.s,c.n,c.p,c.v,Date.now()]);
 }
@@ -152,7 +155,35 @@ Object.defineProperty(S,"coins",{value:M,enumerable:false});
 const save=()=>{localStorage.setItem("cc",JSON.stringify(S))};
 const f=(p)=>p>=1000?p.toLocaleString(undefined,{maximumFractionDigits:2}):p>=1?p.toFixed(p>=100?2:3):p>=.01?p.toFixed(4):p.toPrecision(3);
 const usd=v=>"$"+v.toLocaleString(undefined,{minimumFractionDigits:2,maximumFractionDigits:2});
-const chg=(c,n)=>{let t=Date.now()-n*BASE;if(c.listed)t=Math.max(t,c.listed);return(c.p/pxAt(c,t)-1)*100};
+const chg=(c,n)=>{if(c.real)return c.o24?(c.p/c.o24-1)*100:0;let t=Date.now()-n*BASE;if(c.listed)t=Math.max(t,c.listed);return(c.p/pxAt(c,t)-1)*100};
+
+// ---------- real market sync (Binance public data) ----------
+const ivMs=()=>{const c=S.coins[S.sel];return c.real&&c.rk&&c.rk.length?TFS[S.tf][3]:BASE*TFS[S.tf][1]};
+let kWS=null,kKey="";
+function loadK(c){
+  const key=c.s+TFS[S.tf][2];if(kKey===key)return;kKey=key;c.rk=null;
+  fetch(`${API}/klines?symbol=${c.pair}&interval=${TFS[S.tf][2]}&limit=1000`).then(r=>r.json()).then(a=>{
+    if(kKey!==key||!Array.isArray(a))return;c.rk=a.map(k=>({t:k[0],o:+k[1],h:+k[2],l:+k[3],c:+k[4]}));drawChart()}).catch(()=>{});
+  if(kWS)kWS.close();
+  kWS=new WebSocket(WSS+c.pair.toLowerCase()+"@kline_"+TFS[S.tf][2]);
+  kWS.onmessage=e=>{const k=(JSON.parse(e.data).data||{}).k;if(!k||!c.rk||kKey!==key)return;const n={t:k.t,o:+k.o,h:+k.h,l:+k.l,c:+k.c},l=c.rk[c.rk.length-1];
+    if(l&&l.t===n.t)c.rk[c.rk.length-1]=n;else if(!l||n.t>l.t){c.rk.push(n);if(c.rk.length>1500)c.rk.shift()}};
+}
+let tWS=null;
+async function syncReal(){
+  try{
+    const all=await (await fetch(API+"/ticker/price")).json(),have=new Set(all.map(x=>x.symbol));
+    const rc=Object.values(S.coins).filter(c=>!c.listed&&have.has(c.s+"USDT"));
+    rc.forEach(c=>{c.real=true;c.pair=c.s+"USDT";c.buf=[];c.cs=[]});
+    const t=await (await fetch(`${API}/ticker/24hr?symbols=${encodeURIComponent(JSON.stringify(rc.map(c=>c.pair)))}`)).json();
+    t.forEach(x=>{const c=S.coins[x.symbol.replace(/USDT$/,"")];if(c){c.p=c.live=+x.lastPrice;c.o24=+x.openPrice}});
+    kKey="";lastPx=0;render();
+    const open=()=>{tWS=new WebSocket(WSS+rc.map(c=>c.pair.toLowerCase()+"@miniTicker").join("/"));
+      tWS.onmessage=e=>{const d=JSON.parse(e.data).data;if(!d||!d.s)return;const c=S.coins[d.s.replace(/USDT$/,"")];if(c){c.live=+d.c;c.o24=+d.o}};
+      tWS.onclose=()=>setTimeout(open,3000)};open();
+    toast(`live sync: ${rc.length} coins on real prices`);
+  }catch(e){toast("live sync unavailable — running simulated")}
+}
 
 // ---------- live tick ----------
 let cur=null; // forming candle per coin
@@ -160,6 +191,12 @@ const alerted={};
 function tick(){
   const now=Date.now();
   Object.values(S.coins).forEach(c=>{
+    const prev=c.p;
+    if(c.real){c.p=c.live||c.p;c.buf.push([now,c.p]);while(c.buf.length&&now-c.buf[0][0]>300000)c.buf.shift();
+      const k=c.rk&&c.rk[c.rk.length-1];if(k&&c.s===S.sel){k.c=c.p;k.h=Math.max(k.h,c.p);k.l=Math.min(k.l,c.p)}
+      c.dir=c.p>prev?1:-1;const m=(c.p/c.buf[0][1]-1)*100;
+      if(c.buf.length>20&&Math.abs(m)>=2.5&&(!alerted[c.s]||now-alerted[c.s]>300000)){alerted[c.s]=now;blow(c,m,"5m")}
+      return}
     if(c.s===S.sel){if(!c.cs.length)build(c);const t0=Math.floor(now/BASE)*BASE;let last=c.cs[c.cs.length-1];
       if(t0>last.t){c.cs[c.cs.length-1]=candleAt(c,last.t);for(let t=Math.max(last.t+BASE,t0-MAXC*BASE);t<t0;t+=BASE)c.cs.push(candleAt(c,t));c.cs.push(liveCandle(c,t0,now));while(c.cs.length>MAXC)c.cs.shift()}
       else c.cs[c.cs.length-1]=liveCandle(c,t0,now);
@@ -172,8 +209,8 @@ function tick(){
   });
   render();
 }
-function blow(c,m){
-  const up=m>0,msg=`${c.s} ${up?"🚀 pumping":"💀 dumping"} ${m>0?"+":""}${m.toFixed(1)}% in 1m`;
+function blow(c,m,w="1m"){
+  const up=m>0,msg=`${c.s} ${up?"🚀 pumping":"💀 dumping"} ${m>0?"+":""}${m.toFixed(1)}% in ${w}`;
   toast(msg,c.s);
   if(window.Notification&&Notification.permission==="granted"&&document.hidden)new Notification("NOVAX",{body:msg});
   if(c.s===S.sel)bigFx(up);
@@ -208,7 +245,7 @@ function renderTop(){
   if(lastPx&&c.p!==lastPx){px.className="";void px.offsetWidth;px.className=c.p>lastPx?"bu":"bd";px.style.color=c.p>lastPx?"var(--g)":"var(--r)";
     const mv=(c.p/lastPx-1)*100;if(Math.abs(mv)>c.v*.25&&Date.now()-lastFx>900){lastFx=Date.now();floatFx(mv)}}
   lastPx=c.p;
-  const ch=chg(c,1800);$("#ch").innerHTML=`<span class="${ch>=0?"up":"dn"}">${ch>=0?"▲":"▼"} ${Math.abs(ch).toFixed(2)}%</span> <span class="mut">1h</span>`;
+  const ch=chg(c,1800);$("#ch").innerHTML=`<span class="${ch>=0?"up":"dn"}">${ch>=0?"▲":"▼"} ${Math.abs(ch).toFixed(2)}%</span> <span class="mut">${c.real?"24h · live":"1h · sim"}</span>`;
   let eq=S.cash;for(const s in S.hold)eq+=S.hold[s].q*S.coins[s].p;
   $("#cash").textContent=usd(S.cash);$("#eq").textContent=usd(eq);
   const pl=eq-S.start;$("#pnl").innerHTML=`<span class="${pl>=0?"up":"dn"}">${pl>=0?"+":""}${usd(pl)}</span>`;
@@ -231,7 +268,8 @@ const cv=$("#cv"),ctx=cv.getContext("2d");
 const view={zoom:90,off:0}; // candles visible, offset from right
 let tool="cursor",drag=null,hover=null,geom=null;
 function candles(){
-  const c=S.coins[S.sel],n=TFS[S.tf][1];if(!c.cs.length)build(c);if(n===1)return c.cs;
+  const c=S.coins[S.sel];if(c.real){loadK(c);if(c.rk&&c.rk.length)return c.rk}
+  const n0=0,n=TFS[S.tf][1];if(!c.cs.length)build(c);if(n===1)return c.cs;
   const out=[];const iv=BASE*n;
   for(const k of c.cs){const t=Math.floor(k.t/iv)*iv;const l=out[out.length-1];
     if(l&&l.t===t){l.h=Math.max(l.h,k.h);l.l=Math.min(l.l,k.l);l.c=k.c}else out.push({t,o:k.o,h:k.h,l:k.l,c:k.c})}
@@ -241,12 +279,12 @@ function drawChart(){
   const W=cv.clientWidth,H=cv.clientHeight,dpr=devicePixelRatio||1;
   if(cv.width!==W*dpr||cv.height!==H*dpr){cv.width=W*dpr;cv.height=H*dpr}
   ctx.setTransform(dpr,0,0,dpr,0,0);ctx.clearRect(0,0,W,H);
-  const cs=candles(),PR=70,PB=22,cw=(W-PR)/view.zoom;
+  const cs=candles();if(!cs.length)return;const PR=70,PB=22,cw=(W-PR)/view.zoom;
   const end=cs.length-view.off,start=Math.max(0,Math.floor(end-view.zoom)-1);
   const vis=cs.slice(start,Math.max(end,start+1));
   let hi=-Infinity,lo=Infinity;vis.forEach(k=>{hi=Math.max(hi,k.h);lo=Math.min(lo,k.l)});
   const pad=(hi-lo)*.12||hi*.01;hi+=pad;lo-=pad;
-  const iv=BASE*TFS[S.tf][1],tR=cs[cs.length-1].t+ (view.off>0?-view.off*iv:0);
+  const iv=ivMs(),tR=cs[cs.length-1].t+ (view.off>0?-view.off*iv:0);
   // x: time -> px (rightmost candle center at W-PR-cw)
   const tx=t=>W-PR-cw*.5-((tR-t)/iv)*cw, xt=x=>tR-((W-PR-cw*.5-x)/cw)*iv;
   const py=p=>PB/2+(1-(Math.log(p)-Math.log(lo))/(Math.log(hi)-Math.log(lo)))*(H-PB*1.5);
@@ -362,7 +400,7 @@ $("#resetBtn").onclick=()=>{if(confirm("reset everything?")){localStorage.remove
 let lastSel;
 function render(){if(lastSel!==S.sel){lastSel=S.sel;lastPx=0;setSide(side)}renderList();renderTop();renderTrade();drawChart()}
 addEventListener("resize",drawChart);
-uiBar();setSide("buy");render();
+uiBar();setSide("buy");render();syncReal();
 setInterval(tick,500);setInterval(save,5000);addEventListener("beforeunload",save);
 </script>
 </body>
