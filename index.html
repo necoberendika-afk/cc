@@ -57,7 +57,7 @@ h4{font-size:11px;color:var(--m);letter-spacing:1.5px;font-weight:400}
 </head>
 <body>
 <header>
-  <b>NOVAX</b><span class="mut">markets · 24/7</span>
+  <b>NOVAX</b><span class="mut">markets · 24/7</span><span id="live" class="mut">● connecting</span>
   <span class="sp"></span>
   <span class="mut">cash</span><span id="cash"></span>
   <span class="mut">equity</span><span id="eq"></span>
@@ -99,7 +99,7 @@ h4{font-size:11px;color:var(--m);letter-spacing:1.5px;font-weight:400}
   <b>list a new coin</b>
   <input id="nSym" placeholder="symbol (e.g. MOON)" maxlength="8">
   <input id="nName" placeholder="name">
-  <input id="nPx" type="number" placeholder="start price" value="0.001">
+  <input id="nPx" type="number" placeholder="start price (only if not a real coin)">
   <input id="nVol" type="number" placeholder="volatility 1-10" value="6">
   <div style="display:flex;gap:6px"><button id="nOk" style="flex:1">list it</button><button id="nNo">cancel</button></div>
 </div></div>
@@ -149,40 +149,75 @@ if(!S.custom){ // migrate old saves: keep user-listed coins
   const base=new Set(COINS.map(c=>c[0]));S.custom=Object.values(S.coins||{}).filter(c=>!base.has(c.s)).map(c=>[c.s,c.n,c.p,c.v,Date.now()]);
 }
 delete S.coins;
-const M={};COINS.forEach(([s,n,p,v])=>M[s]=mkCoin(s,n,p,v));S.custom.forEach(([s,n,p,v,l])=>M[s]=mkCoin(s,n,p,v,l));
-Object.values(M).forEach(c=>c.p=pxAt(c,Date.now()));
+const M={};COINS.forEach(([s,n,p,v])=>M[s]=mkCoin(s,n,p,v));S.custom.forEach(([s,n,p,v,l,so])=>{M[s]=mkCoin(s,n,p,v,l);M[s].simOnly=!!so});
+S.lp=S.lp||{};Object.values(M).forEach(c=>{c.p=S.lp[c.s]||pxAt(c,Date.now());c.pending=!c.simOnly});
 Object.defineProperty(S,"coins",{value:M,enumerable:false});
-const save=()=>{localStorage.setItem("cc",JSON.stringify(S))};
+const save=()=>{S.lp={};for(const k in S.coins)if(S.coins[k].ready)S.lp[k]=S.coins[k].p;localStorage.setItem("cc",JSON.stringify(S))};
 const f=(p)=>p>=1000?p.toLocaleString(undefined,{maximumFractionDigits:2}):p>=1?p.toFixed(p>=100?2:3):p>=.01?p.toFixed(4):p.toPrecision(3);
 const usd=v=>"$"+v.toLocaleString(undefined,{minimumFractionDigits:2,maximumFractionDigits:2});
-const chg=(c,n)=>{if(c.real)return c.o24?(c.p/c.o24-1)*100:0;let t=Date.now()-n*BASE;if(c.listed)t=Math.max(t,c.listed);return(c.p/pxAt(c,t)-1)*100};
+const chg=(c,n)=>{if(c.real||c.pending)return c.ready&&c.o24?(c.p/c.o24-1)*100:0;let t=Date.now()-n*BASE;if(c.listed)t=Math.max(t,c.listed);return(c.p/pxAt(c,t)-1)*100};
 
-// ---------- real market sync (Binance public data) ----------
-const ivMs=()=>{const c=S.coins[S.sel];return c.real&&c.rk&&c.rk.length?TFS[S.tf][3]:BASE*TFS[S.tf][1]};
-let kWS=null,kKey="";
+// ---------- real market sync: Binance (stream) + DexScreener (poll) ----------
+const DEX="https://api.dexscreener.com/latest/dex",GT="https://api.geckoterminal.com/api/v2";
+const GTNET={ethereum:"eth",bsc:"bsc",polygon:"polygon_pos",avalanche:"avax",sui:"sui-network"};
+const GTTF=[["minute",1,6e4],["minute",1,6e4],["minute",5,3e5],["minute",15,9e5],["hour",1,36e5]];
+const ivMs=()=>{const c=S.coins[S.sel];if(c.real&&c.rk&&c.rk.length)return c.src==="dex"?GTTF[S.tf][2]:TFS[S.tf][3];return BASE*TFS[S.tf][1]};
+const J=u=>fetch(u).then(r=>{if(!r.ok)throw r.status;return r.json()});
+let kWS=null,kKey="",lastMsg=0,online=false;
+function setLive(c,price,o24){if(!(price>0))return;c.live=price;if(o24>0)c.o24=o24;if(!c.ready){c.ready=true;c.p=price}lastMsg=Date.now()}
 function loadK(c){
-  const key=c.s+TFS[S.tf][2];if(kKey===key)return;kKey=key;c.rk=null;
-  fetch(`${API}/klines?symbol=${c.pair}&interval=${TFS[S.tf][2]}&limit=1000`).then(r=>r.json()).then(a=>{
-    if(kKey!==key||!Array.isArray(a))return;c.rk=a.map(k=>({t:k[0],o:+k[1],h:+k[2],l:+k[3],c:+k[4]}));drawChart()}).catch(()=>{});
-  if(kWS)kWS.close();
-  kWS=new WebSocket(WSS+c.pair.toLowerCase()+"@kline_"+TFS[S.tf][2]);
-  kWS.onmessage=e=>{const k=(JSON.parse(e.data).data||{}).k;if(!k||!c.rk||kKey!==key)return;const n={t:k.t,o:+k.o,h:+k.h,l:+k.l,c:+k.c},l=c.rk[c.rk.length-1];
-    if(l&&l.t===n.t)c.rk[c.rk.length-1]=n;else if(!l||n.t>l.t){c.rk.push(n);if(c.rk.length>1500)c.rk.shift()}};
+  const key=c.s+S.tf;if(kKey===key)return;kKey=key;c.rk=null;if(kWS){kWS.onclose=null;kWS.close();kWS=null}
+  if(c.src==="bn"){
+    J(`${API}/klines?symbol=${c.pair}&interval=${TFS[S.tf][2]}&limit=1000`).then(a=>{if(kKey===key)c.rk=a.map(k=>({t:k[0],o:+k[1],h:+k[2],l:+k[3],c:+k[4]}))}).catch(()=>{});
+    const open=()=>{kWS=new WebSocket(WSS+c.pair.toLowerCase()+"@kline_"+TFS[S.tf][2]);
+      kWS.onmessage=e=>{const k=(JSON.parse(e.data).data||{}).k;if(!k||!c.rk||kKey!==key)return;const n={t:k.t,o:+k.o,h:+k.h,l:+k.l,c:+k.c},l=c.rk[c.rk.length-1];
+        if(l&&l.t===n.t)c.rk[c.rk.length-1]=n;else if(!l||n.t>l.t){c.rk.push(n);if(c.rk.length>1500)c.rk.shift()}};
+      kWS.onclose=()=>{if(kKey===key)setTimeout(open,2000)}};open();
+  }else if(c.src==="dex"){
+    const [tf,ag]=GTTF[S.tf];
+    J(`${GT}/networks/${GTNET[c.chain]||c.chain}/pools/${c.pool}/ohlcv/${tf}?aggregate=${ag}&limit=1000&currency=usd`).then(d=>{
+      if(kKey!==key)return;c.rk=d.data.attributes.ohlcv_list.map(k=>({t:k[0]*1000,o:+k[1],h:+k[2],l:+k[3],c:+k[4]})).reverse()}).catch(()=>{});
+  }
 }
-let tWS=null;
+let tWS=null;const bnC=()=>Object.values(S.coins).filter(c=>c.src==="bn"),dxC=()=>Object.values(S.coins).filter(c=>c.src==="dex");
+function openTickerWS(){
+  if(tWS){tWS.onclose=null;tWS.close()}const rc=bnC();if(!rc.length)return;
+  tWS=new WebSocket(WSS+rc.map(c=>c.pair.toLowerCase()+"@miniTicker").join("/"));
+  tWS.onmessage=e=>{const d=JSON.parse(e.data).data;if(!d||!d.s)return;const c=S.coins[d.s.replace(/USDT$/,"")];if(c)setLive(c,+d.c,+d.o)};
+  tWS.onclose=()=>setTimeout(openTickerWS,3000);
+}
+async function pollBn(){const rc=bnC();if(!rc.length)return;
+  const t=await J(`${API}/ticker/24hr?symbols=${encodeURIComponent(JSON.stringify(rc.map(c=>c.pair)))}`);
+  t.forEach(x=>{const c=S.coins[x.symbol.replace(/USDT$/,"")];if(c)setLive(c,+x.lastPrice,+x.openPrice)})}
+async function pollDex(){const by={};dxC().forEach(c=>(by[c.chain]=by[c.chain]||[]).push(c));
+  for(const ch in by)for(let i=0;i<by[ch].length;i+=30){const grp=by[ch].slice(i,i+30);
+    const d=await J(`${DEX}/pairs/${ch}/${grp.map(c=>c.pool).join(",")}`);
+    (d.pairs||[]).forEach(pr=>{const c=grp.find(c=>c.pool.toLowerCase()===pr.pairAddress.toLowerCase());if(c){const px=+pr.priceUsd,ch24=+(pr.priceChange&&pr.priceChange.h24)||0;setLive(c,px,px/(1+ch24/100))}})}}
+async function findDex(sym){const d=await J(`${DEX}/search?q=${encodeURIComponent(sym)}`);
+  const ps=(d.pairs||[]).filter(p=>p.baseToken.symbol.toUpperCase()===sym&&+p.priceUsd>0).sort((a,b)=>((b.liquidity||{}).usd||0)-((a.liquidity||{}).usd||0));
+  return ps[0]?{chain:ps[0].chainId,pool:ps[0].pairAddress,name:ps[0].baseToken.name,price:+ps[0].priceUsd}:null}
+let bnSet=null;
+function makeReal(c,info){Object.assign(c,info,{real:true,cs:[],buf:c.buf||[],ready:false});if(info.src==="bn")c.pair=c.s+"USDT"}
+async function resolveCoin(c){
+  if(bnSet&&bnSet.has(c.s+"USDT")){makeReal(c,{src:"bn"});return true}
+  try{const x=await findDex(c.s);if(x){makeReal(c,{src:"dex",chain:x.chain,pool:x.pool});return x}}catch(e){return null}
+  return false}
 async function syncReal(){
-  try{
-    const all=await (await fetch(API+"/ticker/price")).json(),have=new Set(all.map(x=>x.symbol));
-    const rc=Object.values(S.coins).filter(c=>!c.listed&&have.has(c.s+"USDT"));
-    rc.forEach(c=>{c.real=true;c.pair=c.s+"USDT";c.buf=[];c.cs=[]});
-    const t=await (await fetch(`${API}/ticker/24hr?symbols=${encodeURIComponent(JSON.stringify(rc.map(c=>c.pair)))}`)).json();
-    t.forEach(x=>{const c=S.coins[x.symbol.replace(/USDT$/,"")];if(c){c.p=c.live=+x.lastPrice;c.o24=+x.openPrice}});
-    kKey="";lastPx=0;render();
-    const open=()=>{tWS=new WebSocket(WSS+rc.map(c=>c.pair.toLowerCase()+"@miniTicker").join("/"));
-      tWS.onmessage=e=>{const d=JSON.parse(e.data).data;if(!d||!d.s)return;const c=S.coins[d.s.replace(/USDT$/,"")];if(c){c.live=+d.c;c.o24=+d.o}};
-      tWS.onclose=()=>setTimeout(open,3000)};open();
-    toast(`live sync: ${rc.length} coins on real prices`);
-  }catch(e){toast("live sync unavailable — running simulated")}
+  try{bnSet=new Set((await J(API+"/ticker/price")).map(x=>x.symbol))}catch(e){bnSet=new Set()}
+  const cs=Object.values(S.coins).filter(c=>!(c.listed&&c.simOnly));
+  await Promise.all(cs.map(c=>resolveCoin(c).then(ok=>{if(ok===false)c.pending=false})));
+  openTickerWS();
+  await Promise.allSettled([pollBn(),pollDex()]);
+  kKey="";lastPx=0;render();
+  const n=Object.values(S.coins).filter(c=>c.ready).length;
+  toast(n?`● live: ${n} coins on real prices`:"couldn't reach price feeds — retrying");
+  // keep syncing forever: dex every 8s, binance REST backup if stream goes quiet
+  if(!bnSet.size)setInterval(async()=>{if(bnSet.size)return;try{bnSet=new Set((await J(API+"/ticker/price")).map(x=>x.symbol))}catch(e){}},30000);
+  setInterval(()=>pollDex().catch(()=>{}),8000);
+  setInterval(()=>{if(Date.now()-lastMsg>10000)pollBn().catch(()=>{});
+    if(Date.now()-lastMsg>30000&&tWS)tWS.close()},5000);
+  // retry unresolved coins every minute
+  setInterval(()=>{Object.values(S.coins).filter(c=>c.pending&&!c.real).forEach(c=>resolveCoin(c).then(ok=>{if(ok){openTickerWS();pollBn().catch(()=>{})}}))},60000);
 }
 
 // ---------- live tick ----------
@@ -192,8 +227,8 @@ function tick(){
   const now=Date.now();
   Object.values(S.coins).forEach(c=>{
     const prev=c.p;
-    if(c.real){c.p=c.live||c.p;c.buf.push([now,c.p]);while(c.buf.length&&now-c.buf[0][0]>300000)c.buf.shift();
-      const k=c.rk&&c.rk[c.rk.length-1];if(k&&c.s===S.sel){k.c=c.p;k.h=Math.max(k.h,c.p);k.l=Math.min(k.l,c.p)}
+    if(c.real||c.pending){if(!c.ready){c.dir=0;return}c.p=c.live;c.buf.push([now,c.p]);while(c.buf.length&&now-c.buf[0][0]>300000)c.buf.shift();
+      let k=c.rk&&c.rk[c.rk.length-1];if(k&&c.s===S.sel){const iv=ivMs(),t0=Math.floor(now/iv)*iv;if(c.src==="dex"&&t0>k.t){k={t:t0,o:k.c,h:k.c,l:k.c,c:k.c};c.rk.push(k)}k.c=c.p;k.h=Math.max(k.h,c.p);k.l=Math.min(k.l,c.p)}
       c.dir=c.p>prev?1:-1;const m=(c.p/c.buf[0][1]-1)*100;
       if(c.buf.length>20&&Math.abs(m)>=2.5&&(!alerted[c.s]||now-alerted[c.s]>300000)){alerted[c.s]=now;blow(c,m,"5m")}
       return}
@@ -228,7 +263,7 @@ function renderList(){
   listEl.querySelectorAll(".row").forEach(r=>{
     const c=S.coins[r.dataset.s],ch=chg(c,1800);
     r.classList.toggle("sel",c.s===S.sel);
-    r.querySelector(".p").textContent=f(c.p);
+    r.querySelector(".p").textContent=c.ready||!(c.real||c.pending)?f(c.p):"…";
     const ce=r.querySelector(".c");ce.textContent=(ch>=0?"+":"")+ch.toFixed(2)+"%";ce.className="c "+(ch>=0?"up":"dn");
     if(Math.random()<.15){r.classList.remove("fu","fd");void r.offsetWidth;r.classList.add(c.dir>0?"fu":"fd");setTimeout(()=>r.classList.remove("fu","fd"),50)}
   });
@@ -239,13 +274,14 @@ $("#search").oninput=renderList;
 // ---------- ui: header/top ----------
 let lastPx=0,lastFx=0;
 function renderTop(){
+  const lv=$("#live"),ok=Date.now()-lastMsg<15000;lv.textContent=ok?"● LIVE":"● reconnecting";lv.className=ok?"up":"dn";
   const c=S.coins[S.sel];
   $("#sym").textContent=c.s;$("#name").textContent=c.n;
-  const px=$("#px");px.textContent="$"+f(c.p);
+  const px=$("#px");const wait=(c.real||c.pending)&&!c.ready;px.textContent=wait?"connecting…":"$"+f(c.p);
   if(lastPx&&c.p!==lastPx){px.className="";void px.offsetWidth;px.className=c.p>lastPx?"bu":"bd";px.style.color=c.p>lastPx?"var(--g)":"var(--r)";
     const mv=(c.p/lastPx-1)*100;if(Math.abs(mv)>c.v*.25&&Date.now()-lastFx>900){lastFx=Date.now();floatFx(mv)}}
   lastPx=c.p;
-  const ch=chg(c,1800);$("#ch").innerHTML=`<span class="${ch>=0?"up":"dn"}">${ch>=0?"▲":"▼"} ${Math.abs(ch).toFixed(2)}%</span> <span class="mut">${c.real?"24h · live":"1h · sim"}</span>`;
+  const ch=chg(c,1800);$("#ch").innerHTML=`<span class="${ch>=0?"up":"dn"}">${ch>=0?"▲":"▼"} ${Math.abs(ch).toFixed(2)}%</span> <span class="mut">${c.real?(c.src==="dex"?"24h · live · dex":"24h · live"):c.pending?"…":"1h · sim"}</span>`;
   let eq=S.cash;for(const s in S.hold)eq+=S.hold[s].q*S.coins[s].p;
   $("#cash").textContent=usd(S.cash);$("#eq").textContent=usd(eq);
   const pl=eq-S.start;$("#pnl").innerHTML=`<span class="${pl>=0?"up":"dn"}">${pl>=0?"+":""}${usd(pl)}</span>`;
@@ -268,7 +304,7 @@ const cv=$("#cv"),ctx=cv.getContext("2d");
 const view={zoom:90,off:0}; // candles visible, offset from right
 let tool="cursor",drag=null,hover=null,geom=null;
 function candles(){
-  const c=S.coins[S.sel];if(c.real){loadK(c);if(c.rk&&c.rk.length)return c.rk}
+  const c=S.coins[S.sel];if(c.real||c.pending){if(c.real)loadK(c);return c.rk||[]}
   const n0=0,n=TFS[S.tf][1];if(!c.cs.length)build(c);if(n===1)return c.cs;
   const out=[];const iv=BASE*n;
   for(const k of c.cs){const t=Math.floor(k.t/iv)*iv;const l=out[out.length-1];
@@ -367,7 +403,7 @@ $("#tb").onclick=()=>setSide("buy");$("#ts").onclick=()=>setSide("sell");
 document.querySelectorAll(".pct button").forEach(b=>b.onclick=()=>{const c=S.coins[S.sel],h=S.hold[S.sel];const max=side==="buy"?S.cash:(h?h.q*c.p:0);$("#amt").value=(max*b.dataset.p).toFixed(2);renderTrade()});
 $("#amt").oninput=renderTrade;
 function trade(sym,sd,usdAmt){
-  const c=S.coins[sym],fee=.001;if(!(usdAmt>0))return toast("enter an amount");
+  const c=S.coins[sym],fee=.001;if((c.real||c.pending)&&!c.ready)return toast("waiting for live price…");if(!(usdAmt>0))return toast("enter an amount");
   if(sd==="buy"){if(usdAmt>S.cash+1e-9)return toast("not enough cash");const q=usdAmt*(1-fee)/c.p;const h=S.hold[sym]||(S.hold[sym]={q:0,cost:0});h.q+=q;h.cost+=usdAmt;S.cash-=usdAmt}
   else{const h=S.hold[sym];if(!h||h.q*c.p<usdAmt-1e-6)return toast("not enough "+sym);let q=usdAmt/c.p;if(h.q-q<1e-12||h.q*c.p-usdAmt<.01)q=h.q;const frac=q/h.q;h.cost*=1-frac;h.q-=q;S.cash+=q*c.p*(1-fee);if(h.q<=1e-12)delete S.hold[sym]}
   S.hist.unshift(`${new Date().toLocaleTimeString()} ${sd} ${usd(usdAmt)} ${sym} @ ${f(c.p)}`);S.hist=S.hist.slice(0,30);save();render();return true;
@@ -389,9 +425,15 @@ $("#hold").onclick=e=>{const r=e.target.closest("[data-s]");if(r){S.sel=r.datase
 // ---------- list coin ----------
 $("#listBtn").onclick=()=>$("#modal").style.display="flex";
 $("#nNo").onclick=()=>$("#modal").style.display="none";
-$("#nOk").onclick=()=>{const s=$("#nSym").value.toUpperCase().replace(/[^A-Z0-9]/g,""),n=$("#nName").value||s,p=+$("#nPx").value,v=Math.min(10,Math.max(1,+$("#nVol").value||5));
-  if(!s||S.coins[s]||!(p>0))return toast("invalid or taken symbol");
-  const L=Date.now();const nc=mkCoin(s,n,p,v,L);nc.p0=p/Math.exp(lp(nc,L));S.custom.push([s,n,nc.p0,v,L]);build(nc);S.coins[s]=nc;S.sel=s;$("#modal").style.display="none";save();toast(`${s} listed 🎉`);render()};
+$("#nOk").onclick=async()=>{const s=$("#nSym").value.toUpperCase().replace(/[^A-Z0-9]/g,""),v=Math.min(10,Math.max(1,+$("#nVol").value||5));
+  if(!s||S.coins[s])return toast("invalid or taken symbol");
+  $("#nOk").textContent="searching…";const L=Date.now(),nc=mkCoin(s,$("#nName").value||s,1,v,L);
+  const r=await resolveCoin(nc);$("#nOk").textContent="list it";
+  if(r){if(r.name&&!$("#nName").value)nc.n=r.name;S.custom.push([s,nc.n,1,v,L,0]);S.coins[s]=nc;
+    if(nc.src==="bn"){openTickerWS();pollBn().catch(()=>{})}else pollDex().catch(()=>{});toast(`${s} found — tracking real price`)}
+  else{const p=+$("#nPx").value;if(!(p>0))return toast("not found on any market — enter a start price to list it as a sim coin");
+    nc.simOnly=true;nc.pending=false;nc.p0=p/Math.exp(lp(nc,L));S.custom.push([s,nc.n,nc.p0,v,L,1]);build(nc);S.coins[s]=nc;toast(`${s} not on any market — listed as sim coin`)}
+  S.sel=s;$("#modal").style.display="none";save();render()};
 
 // ---------- misc ----------
 function toast(m,sym){const d=document.createElement("div");d.className="toast";d.textContent=m;if(sym)d.onclick=()=>{S.sel=sym;render()};$("#toasts").appendChild(d);setTimeout(()=>d.remove(),5000)}
